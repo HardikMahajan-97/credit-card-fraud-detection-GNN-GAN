@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.env
+.venv
+
+# Data files
+data/*.csv
+data/*.parquet
+data/*.json
+data/*.zip
+
+# Model checkpoints
+checkpoints/
+
+# Logs
+logs/
+*.log
+
+# Results and plots
+results/
+plots/
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kaggle credentials
+~/.kaggle/
+kaggle.json
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# MyPy
+.mypy_cache/
+
+# TensorBoard
+runs/
