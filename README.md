@@ -287,5 +287,4 @@ pytest tests/ -v
 ---
 
 ## License
-
-MIT License
+Hardik Mahajan
