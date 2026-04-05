@@ -122,17 +122,45 @@ class FeatureEngineer:
 
     def _add_aggregation_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Card and merchant-level aggregations."""
+        if "time" in df.columns:
+            df = df.sort_values("time").reset_index(drop=True)
+
         if "merchant_id" in df.columns:
-            merchant_agg = df.groupby("merchant_id")["amount"].mean().rename("merchant_avg_amount")
-            df = df.merge(merchant_agg, on="merchant_id", how="left")
+            if "time" in df.columns:
+                grp_amt = df.groupby("merchant_id", sort=False)["amount"]
+                prior_amt_sum = grp_amt.cumsum() - df["amount"]
+                prior_amt_count = grp_amt.cumcount()
+                df["merchant_avg_amount"] = (
+                    prior_amt_sum / prior_amt_count.replace(0, np.nan)
+                ).fillna(0.0)
+            else:
+                merchant_agg = df.groupby("merchant_id")["amount"].mean().rename("merchant_avg_amount")
+                df = df.merge(merchant_agg, on="merchant_id", how="left")
 
             if "is_fraud" in df.columns:
-                merchant_fraud = df.groupby("merchant_id")["is_fraud"].mean().rename("merchant_fraud_rate")
-                df = df.merge(merchant_fraud, on="merchant_id", how="left")
+                if "time" in df.columns:
+                    grp = df.groupby("merchant_id", sort=False)["is_fraud"]
+                    prior_fraud = grp.cumsum() - df["is_fraud"]
+                    prior_count = grp.cumcount()
+                    df["merchant_fraud_rate"] = (
+                        prior_fraud / prior_count.replace(0, np.nan)
+                    ).fillna(0.0)
+                    # Uses only prior transactions per merchant to avoid label leakage.
+                else:
+                    merchant_fraud = df.groupby("merchant_id")["is_fraud"].mean().rename("merchant_fraud_rate")
+                    df = df.merge(merchant_fraud, on="merchant_id", how="left")
 
         if "card_id" in df.columns:
-            card_agg = df.groupby("card_id")["amount"].mean().rename("card_avg_amount")
-            df = df.merge(card_agg, on="card_id", how="left")
+            if "time" in df.columns:
+                grp_amt = df.groupby("card_id", sort=False)["amount"]
+                prior_amt_sum = grp_amt.cumsum() - df["amount"]
+                prior_amt_count = grp_amt.cumcount()
+                df["card_avg_amount"] = (
+                    prior_amt_sum / prior_amt_count.replace(0, np.nan)
+                ).fillna(0.0)
+            else:
+                card_agg = df.groupby("card_id")["amount"].mean().rename("card_avg_amount")
+                df = df.merge(card_agg, on="card_id", how="left")
 
         return df
 

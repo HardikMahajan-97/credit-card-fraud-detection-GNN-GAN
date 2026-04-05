@@ -36,9 +36,14 @@ gnn:
   num_gat_layers: 2
   gat_heads: 4
   dropout: 0.3
-  learning_rate: 0.001
-  epochs: 100
+  learning_rate: 0.0005  # lower LR stabilizes early optimization on imbalanced fraud data
+  epochs: 60  # additional epochs improve convergence for hybrid fraud modeling
   batch_size: 64
+  max_neighbors: 30  # cap neighbors per node in GNN aggregation to reduce over-smoothing on dense graphs
+  pos_weight: 1.0  # focal_alpha carries fraud-class emphasis; avoid double-penalizing minority class
+  focal_alpha: 0.75  # up-weight fraud class contribution in focal loss on skewed labels
+  focal_gamma: 2.0  # standard focal gamma to focus hard examples without excessive suppression
+  lr_patience: 5  # allow scheduler to wait longer before reducing LR on noisy validation curves
 
 continual_learning:
   ewc_lambda: 5000.0
@@ -61,6 +66,6 @@ inference:
 training:
   device: "auto"
   num_workers: 4
-  early_stopping_patience: 10
+  early_stopping_patience: 15  # longer patience is safer with PR-AUC-driven early stopping on imbalance
   checkpoint_dir: "checkpoints"
   log_dir: "logs"
