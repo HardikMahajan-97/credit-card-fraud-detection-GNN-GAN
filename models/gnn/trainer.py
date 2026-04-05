@@ -282,6 +282,7 @@ class GNNTrainer:
             pr_auc = float(average_precision_score(y_true, y_prob))
         else:
             pr_auc = 0.0
+            logger.warning("Validation PR-AUC set to 0.0 because validation labels contain only one class.")
         return float(np.mean(losses)), pr_auc
 
     def _compute_replay_loss(self, entries: list) -> torch.Tensor:

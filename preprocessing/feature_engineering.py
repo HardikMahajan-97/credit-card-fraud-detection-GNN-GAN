@@ -132,7 +132,7 @@ class FeatureEngineer:
                 prior_amt_count = grp_amt.cumcount()
                 df["merchant_avg_amount"] = (
                     prior_amt_sum / prior_amt_count.replace(0, np.nan)
-                ).fillna(df["amount"])
+                ).fillna(0.0)
             else:
                 merchant_agg = df.groupby("merchant_id")["amount"].mean().rename("merchant_avg_amount")
                 df = df.merge(merchant_agg, on="merchant_id", how="left")
@@ -157,7 +157,7 @@ class FeatureEngineer:
                 prior_amt_count = grp_amt.cumcount()
                 df["card_avg_amount"] = (
                     prior_amt_sum / prior_amt_count.replace(0, np.nan)
-                ).fillna(df["amount"])
+                ).fillna(0.0)
             else:
                 card_agg = df.groupby("card_id")["amount"].mean().rename("card_avg_amount")
                 df = df.merge(card_agg, on="card_id", how="left")

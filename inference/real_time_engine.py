@@ -19,6 +19,7 @@ import torch
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+MAX_GAP_SECONDS = 604800.0  # 7-day cap for inactivity feature stability.
 
 try:
     from torch_geometric.data import Data  # type: ignore
@@ -232,9 +233,9 @@ class RealTimeEngine:
         # seconds since previous transaction for card, clipped to 7 days
         prev_ts = ts_map.get(card_id) if card_id else None
         if ts is not None and prev_ts is not None:
-            secs = min(max((ts - prev_ts).total_seconds(), 0.0), 604800.0)
+            secs = min(max((ts - prev_ts).total_seconds(), 0.0), MAX_GAP_SECONDS)
         else:
-            secs = 604800.0
+            secs = MAX_GAP_SECONDS
         secs_feat = float(np.log1p(secs))
 
         # merchant novelty per card
