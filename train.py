@@ -221,6 +221,7 @@ def phase_train_gnn(cfg: Dict, train_ds, val_ds, device: torch.device):
         num_gat_layers=int(gnn_cfg.get("num_gat_layers", 2)),
         gat_heads=int(gnn_cfg.get("gat_heads", 4)),
         dropout=float(gnn_cfg.get("dropout", 0.3)),
+        max_neighbors=int(gnn_cfg.get("max_neighbors", 30)),
     )
 
     replay_buffer = ExperienceReplayBuffer(
@@ -228,19 +229,22 @@ def phase_train_gnn(cfg: Dict, train_ds, val_ds, device: torch.device):
     )
 
     # Compute class weights for imbalanced data
-    n_fraud = int((train_ds.labels == 1).sum().item())
-    n_legit = int((train_ds.labels == 0).sum().item())
-    pos_weight = n_legit / (n_fraud + 1e-6)
+    focal_alpha = float(gnn_cfg.get("focal_alpha", 0.75))
+    pos_weight = float(gnn_cfg.get("pos_weight", 1.0))
     class_weights = torch.tensor([1.0, pos_weight], dtype=torch.float32)
 
     trainer = GNNTrainer(
         model=model,
         device=device,
-        lr=float(gnn_cfg.get("learning_rate", 1e-3)),
+        lr=float(gnn_cfg.get("learning_rate", 5e-4)),
+        lr_patience=int(gnn_cfg.get("lr_patience", 5)),
         ewc_lambda=float(cl_cfg.get("ewc_lambda", 5000.0)),
         replay_buffer=replay_buffer,
         replay_ratio=float(cl_cfg.get("replay_ratio", 0.3)),
         class_weights=class_weights,
+        focal_alpha=focal_alpha,
+        focal_gamma=float(gnn_cfg.get("focal_gamma", 2.0)),
+        pos_weight=pos_weight,
         checkpoint_dir=cfg.get("training", {}).get("checkpoint_dir", "checkpoints") + "/gnn",
         patience=int(cfg.get("training", {}).get("early_stopping_patience", 10)),
     )

@@ -38,6 +38,9 @@ class TransactionRequest(BaseModel):
     is_international: int = Field(default=0, ge=0, le=1)
     latitude: float = Field(default=0.0, ge=-90.0, le=90.0)
     longitude: float = Field(default=0.0, ge=-180.0, le=180.0)
+    timestamp: Optional[str] = Field(default=None)
+    card_id: Optional[str] = Field(default=None)
+    merchant_id: Optional[str] = Field(default=None)
     merchant_category: Optional[str] = Field(default=None)
     card_type: Optional[str] = Field(default=None)
 

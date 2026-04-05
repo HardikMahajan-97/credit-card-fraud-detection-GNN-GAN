@@ -94,6 +94,7 @@ class GraphSAGEConv(nn.Module if not _HAS_PYG else MessagePassing):  # type: ign
         out_channels: int,
         normalize: bool = True,
         bias: bool = True,
+        max_neighbors: int = 30,
     ) -> None:
         if _HAS_PYG:
             super().__init__(aggr="mean")
@@ -103,6 +104,7 @@ class GraphSAGEConv(nn.Module if not _HAS_PYG else MessagePassing):  # type: ign
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.normalize = normalize
+        self.max_neighbors = max_neighbors
 
         self.lin_self = nn.Linear(in_channels, out_channels, bias=False)
         self.lin_neigh = nn.Linear(in_channels, out_channels, bias=False)
@@ -131,6 +133,7 @@ class GraphSAGEConv(nn.Module if not _HAS_PYG else MessagePassing):  # type: ign
         return self._fallback_forward(x, edge_index)
 
     def _pyg_forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        edge_index = self._cap_neighbors(edge_index, x.size(0))
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
         agg = self.propagate(edge_index, x=x)
         out = self.lin_self(x) + self.lin_neigh(agg)
@@ -146,6 +149,7 @@ class GraphSAGEConv(nn.Module if not _HAS_PYG else MessagePassing):  # type: ign
     def _fallback_forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         """Simple mean aggregation fallback (no PyG required)."""
         n = x.size(0)
+        edge_index = self._cap_neighbors(edge_index, n)
         src, dst = edge_index[0], edge_index[1]
         agg = torch.zeros_like(x)
         count = torch.zeros(n, 1, device=x.device)
@@ -160,6 +164,26 @@ class GraphSAGEConv(nn.Module if not _HAS_PYG else MessagePassing):  # type: ign
         if self.normalize:
             out = F.normalize(out, p=2, dim=-1)
         return out
+
+    def _cap_neighbors(self, edge_index: torch.Tensor, n_nodes: int) -> torch.Tensor:
+        """Cap incoming edges per destination node to control over-smoothing."""
+        if self.max_neighbors <= 0 or edge_index.numel() == 0:
+            return edge_index
+        src, dst = edge_index[0], edge_index[1]
+        deg = torch.bincount(dst, minlength=n_nodes)
+        if int(deg.max().item()) <= self.max_neighbors:
+            return edge_index
+        perm = torch.randperm(dst.numel(), device=dst.device)
+        src = src[perm]
+        dst = dst[perm]
+        keep = torch.zeros(dst.numel(), dtype=torch.bool, device=dst.device)
+        seen = torch.zeros(n_nodes, dtype=torch.long, device=dst.device)
+        for i in range(dst.numel()):
+            d = int(dst[i].item())
+            if seen[d] < self.max_neighbors:
+                keep[i] = True
+                seen[d] += 1
+        return torch.stack([src[keep], dst[keep]], dim=0)
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from sklearn.metrics import average_precision_score
 
 from models.gnn.model import GNNModel
 from models.gnn.memory_buffer import ExperienceReplayBuffer
@@ -58,6 +59,10 @@ class GNNTrainer:
         replay_buffer: Optional[ExperienceReplayBuffer] = None,
         replay_ratio: float = 0.3,
         class_weights: Optional[torch.Tensor] = None,
+        focal_alpha: float = 0.75,
+        focal_gamma: float = 2.0,
+        pos_weight: float = 1.0,
+        lr_patience: int = 5,
         checkpoint_dir: str = "checkpoints/gnn",
         grad_clip: float = 1.0,
         patience: int = 10,
@@ -70,14 +75,17 @@ class GNNTrainer:
         self.checkpoint_dir = checkpoint_dir
         self.grad_clip = grad_clip
         self.patience = patience
+        self.focal_alpha = focal_alpha
+        self.focal_gamma = focal_gamma
+        self.pos_weight = pos_weight
+        self.lr_patience = lr_patience
 
         self.optimizer = optim.Adam(model.parameters(), lr=lr)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode="min", patience=5, factor=0.5
+            self.optimizer, mode="min", patience=self.lr_patience, factor=0.5
         )
 
-        weight = class_weights.to(device) if class_weights is not None else None
-        self.criterion = nn.CrossEntropyLoss(weight=weight)
+        self.class_weights = class_weights.to(device) if class_weights is not None else None
 
         # EWC state
         self._fisher: Dict[str, torch.Tensor] = {}
@@ -112,7 +120,7 @@ class GNNTrainer:
         Returns:
             Training history dictionary.
         """
-        best_val_loss = float("inf")
+        best_pr_auc = 0.0
         no_improve = 0
 
         for epoch in range(1, epochs + 1):
@@ -122,15 +130,17 @@ class GNNTrainer:
             self.history["replay_loss"].append(train_metrics["replay"])
 
             val_loss = None
+            val_pr_auc = None
             if val_loader is not None:
-                val_loss = self._val_epoch(val_loader)
+                val_loss, val_pr_auc = self._val_epoch(val_loader)
                 self.history["val_loss"].append(val_loss)
                 self.scheduler.step(val_loss)
 
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
+                if val_pr_auc is not None and val_pr_auc >= best_pr_auc:
+                    best_pr_auc = val_pr_auc
                     no_improve = 0
                     self._save(epoch, tag="best")
+                    logger.info(f"  ✓ Best PR-AUC={best_pr_auc:.4f} — saved")
                 else:
                     no_improve += 1
 
@@ -144,7 +154,11 @@ class GNNTrainer:
                     f"Train Loss: {train_metrics['total']:.4f} | "
                     f"EWC: {train_metrics['ewc']:.4f} | "
                     f"Replay: {train_metrics['replay']:.4f}"
-                    + (f" | Val Loss: {val_loss:.4f}" if val_loss is not None else "")
+                    + (
+                        f" | Val Loss: {val_loss:.4f} | Val PR-AUC: {val_pr_auc:.4f}"
+                        if val_loss is not None and val_pr_auc is not None
+                        else ""
+                    )
                 )
 
             if tb_writer is not None:
@@ -201,7 +215,7 @@ class GNNTrainer:
                 node_logits, _ = self.model(fake_data)
                 labels = labels
 
-            ce_loss = self.criterion(node_logits, labels.to(self.device))
+            ce_loss = self._focal_loss(node_logits, labels.to(self.device))
             ewc_loss = self.compute_ewc_loss()
 
             # Replay loss
@@ -236,9 +250,11 @@ class GNNTrainer:
             "replay": float(np.mean(replay_losses)),
         }
 
-    def _val_epoch(self, loader: DataLoader) -> float:
+    def _val_epoch(self, loader: DataLoader) -> Tuple[float, float]:
         self.model.eval()
         losses = []
+        all_probs = []
+        all_labels = []
         with torch.no_grad():
             for batch in loader:
                 if _HAS_PYG:
@@ -256,8 +272,17 @@ class GNNTrainer:
                             self.batch = None
                     ei = torch.zeros(2, 0, dtype=torch.long, device=self.device)
                     logits, _ = self.model(_FD(x, ei))
-                losses.append(float(self.criterion(logits, labels).item()))
-        return float(np.mean(losses))
+                losses.append(float(self._focal_loss(logits, labels).item()))
+                probs = torch.softmax(logits, dim=-1)[:, 1]
+                all_probs.append(probs.detach().cpu().numpy())
+                all_labels.append(labels.detach().cpu().numpy())
+        y_prob = np.concatenate(all_probs) if all_probs else np.array([])
+        y_true = np.concatenate(all_labels) if all_labels else np.array([])
+        if y_true.size > 0 and len(np.unique(y_true)) > 1:
+            pr_auc = float(average_precision_score(y_true, y_prob))
+        else:
+            pr_auc = 0.0
+        return float(np.mean(losses)), pr_auc
 
     def _compute_replay_loss(self, entries: list) -> torch.Tensor:
         """Compute cross-entropy loss on replay samples."""
@@ -278,7 +303,7 @@ class GNNTrainer:
                     mask = batch.batch == i
                     graph_logits.append(logits[mask].mean(0, keepdim=True))
                 logits = torch.cat(graph_logits, dim=0)
-            return self.criterion(logits, labels)
+            return self._focal_loss(logits, labels)
         except Exception as exc:
             logger.debug(f"Replay loss failed: {exc}")
             return torch.tensor(0.0, device=self.device)
@@ -315,7 +340,7 @@ class GNNTrainer:
                 ei = torch.zeros(2, 0, dtype=torch.long, device=self.device)
                 logits, _ = self.model(_FD(x, ei))
 
-            loss = self.criterion(logits, labels)
+            loss = self._focal_loss(logits, labels)
             self.model.zero_grad()
             loss.backward()
 
@@ -353,3 +378,19 @@ class GNNTrainer:
             checkpoint_dir=self.checkpoint_dir,
             filename=f"gnn_{tag}_epoch_{epoch}.pt",
         )
+
+    def _focal_loss(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        ce = F.cross_entropy(
+            logits,
+            labels,
+            weight=self.class_weights,
+            reduction="none",
+        )
+        pt = torch.exp(-ce)
+        alpha_t = torch.where(labels == 1, self.focal_alpha, 1.0 - self.focal_alpha)
+        loss = alpha_t * ((1.0 - pt) ** self.focal_gamma) * ce
+        if self.pos_weight != 1.0:
+            pos_scale = torch.where(labels == 1, self.pos_weight, 1.0)
+            loss = loss * pos_scale
+        # pos_weight=1.0 is intentional when focal_alpha >= 0.75; do not increase both simultaneously.
+        return loss.mean()

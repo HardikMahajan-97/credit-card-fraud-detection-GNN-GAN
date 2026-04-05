@@ -62,11 +62,13 @@ class GNNModel(nn.Module):
         num_classes: int = 2,
         dropout: float = 0.3,
         temporal_dim: int = 0,
+        max_neighbors: int = 30,
     ) -> None:
         super().__init__()
 
         self.dropout = dropout
         self.temporal_dim = temporal_dim
+        self.max_neighbors = max_neighbors
         effective_input = input_dim + temporal_dim
 
         # ------ Input projection ------
@@ -75,7 +77,9 @@ class GNNModel(nn.Module):
         # ------ GraphSAGE layers ------
         self.sage_layers = nn.ModuleList()
         for _ in range(num_sage_layers):
-            self.sage_layers.append(GraphSAGEConv(hidden_dim, hidden_dim))
+            self.sage_layers.append(
+                GraphSAGEConv(hidden_dim, hidden_dim, max_neighbors=self.max_neighbors)
+            )
 
         # ------ GAT layers ------
         self.gat_layers = nn.ModuleList()
